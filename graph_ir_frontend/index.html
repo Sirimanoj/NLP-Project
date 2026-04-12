@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Graph IR Project</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="bg-orb orb-a"></div>
+    <div class="bg-orb orb-b"></div>
+
+    <main class="page">
+      <header class="hero">
+        <p class="badge">NLP Course Project</p>
+        <h1>Graph IR: Dependency-Graph Retrieval</h1>
+        <p class="subtitle">
+          Innovation implemented: semantic node matching + dependency relation similarity.
+        </p>
+      </header>
+
+      <section class="panel controls">
+        <h2>Backend Connection</h2>
+        <div class="grid two">
+          <label>
+            Render API Base URL
+            <input id="apiBase" type="text" placeholder="https://your-api.onrender.com" />
+          </label>
+          <label>
+            Corpus Source
+            <select id="source">
+              <option value="demo">demo</option>
+              <option value="trec-covid">trec-covid</option>
+            </select>
+          </label>
+          <label>
+            Corpus Limit
+            <input id="limit" type="number" min="10" max="5000" value="1000" />
+          </label>
+          <label class="check">
+            <input id="removeStopwords" type="checkbox" checked />
+            Remove Stopwords
+          </label>
+        </div>
+        <div class="actions">
+          <button id="loadBtn">Load Corpus</button>
+          <button id="statusBtn" class="ghost">Check Status</button>
+        </div>
+        <pre id="statusBox" class="mono status">Status not loaded yet.</pre>
+      </section>
+
+      <section class="panel controls">
+        <h2>Search</h2>
+        <div class="grid two">
+          <label>
+            Query Mode
+            <select id="queryMode">
+              <option value="custom">custom</option>
+              <option value="topic">topic</option>
+            </select>
+          </label>
+          <label>
+            TREC Topic (qid)
+            <select id="topicQid">
+              <option value="">(load topics first)</option>
+            </select>
+          </label>
+          <label>
+            Topic Field
+            <select id="topicField">
+              <option value="description">description</option>
+              <option value="title">title</option>
+              <option value="narrative">narrative</option>
+            </select>
+          </label>
+          <label>
+            Top K
+            <input id="topK" type="number" min="1" max="50" value="5" />
+          </label>
+          <label>
+            Node Weight
+            <input id="nodeWeight" type="number" min="0" max="1" step="0.05" value="0.7" />
+          </label>
+          <label>
+            Edge Weight
+            <input id="edgeWeight" type="number" min="0" max="1" step="0.05" value="0.3" />
+          </label>
+        </div>
+        <label>
+          Query
+          <textarea id="queryText" rows="3" placeholder="how does covid spread"></textarea>
+        </label>
+        <div class="actions">
+          <button id="searchBtn">Run Retrieval</button>
+          <button id="evalBtn" class="ghost">Evaluate @K (TREC)</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Results</h2>
+        <div id="metrics" class="metrics"></div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Doc</th>
+                <th>Score</th>
+                <th>Node Sim</th>
+                <th>Edge Sim</th>
+                <th>Title</th>
+              </tr>
+            </thead>
+            <tbody id="resultRows">
+              <tr>
+                <td colspan="5" class="muted">Run retrieval to see results.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Innovation Statement (for Viva)</h2>
+        <p>
+          My system retrieves documents by comparing the dependency graph of the query with
+          the dependency graphs of documents using semantic node similarity and relation-aware
+          graph matching.
+        </p>
+      </section>
+    </main>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

@@ -1,0 +1,281 @@
+from __future__ import annotations
+
+import hashlib
+import os
+import threading
+from dataclasses import dataclass
+from datetime import datetime, timezone
+
+import numpy as np
+import pandas as pd
+
+from graph_ir_app.engine import (
+    GraphIRRetriever,
+    RawDocument,
+    get_demo_corpus,
+    load_trec_covid,
+    precision_recall_at_k,
+)
+
+
+class LightweightEmbeddingModel:
+    """Fallback embedding model to keep the API available without heavy dependencies."""
+
+    def __init__(self, dim: int = 384) -> None:
+        self.dim = dim
+
+    def encode(self, texts, normalize_embeddings: bool = True, show_progress_bar: bool = False):
+        vectors = []
+        for text in texts:
+            seed = int(hashlib.sha256(str(text).encode("utf-8")).hexdigest()[:8], 16)
+            rng = np.random.default_rng(seed)
+            vec = rng.normal(size=self.dim).astype(np.float32)
+            if normalize_embeddings:
+                norm = np.linalg.norm(vec)
+                if norm > 0:
+                    vec = vec / norm
+            vectors.append(vec)
+        return np.vstack(vectors) if vectors else np.empty((0, self.dim), dtype=np.float32)
+
+
+@dataclass
+class CorpusState:
+    source: str
+    limit: int
+    remove_stopwords: bool
+    retriever: GraphIRRetriever
+    topics: pd.DataFrame
+    qrels: pd.DataFrame
+    nlp_mode: str
+    embedding_mode: str
+    loaded_at: str
+
+
+class GraphIRService:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._state: CorpusState | None = None
+        self._nlp, self._nlp_mode = self._load_nlp_model()
+        self._embedder, self._embedding_mode = self._load_embedding_model()
+
+    def _load_nlp_model(self):
+        import spacy
+
+        try:
+            return spacy.load("en_core_web_sm"), "spacy_en_core_web_sm"
+        except OSError:
+            try:
+                from spacy.cli import download
+
+                download("en_core_web_sm")
+                return spacy.load("en_core_web_sm"), "spacy_en_core_web_sm_downloaded"
+            except Exception:
+                nlp = spacy.blank("en")
+                if "sentencizer" not in nlp.pipe_names:
+                    nlp.add_pipe("sentencizer")
+                return nlp, "spacy_blank_en"
+
+    def _load_embedding_model(self):
+        mode = os.getenv("GRAPH_IR_EMBEDDING_MODE", "lite").lower()
+        if mode in {"sentence", "auto"}:
+            try:
+                from sentence_transformers import SentenceTransformer
+
+                return SentenceTransformer("all-MiniLM-L6-v2"), "sentence_transformers_all_MiniLM_L6_v2"
+            except Exception:
+                if mode == "sentence":
+                    raise
+        return LightweightEmbeddingModel(), "lightweight_hash_embeddings"
+
+    def ensure_loaded(
+        self,
+        source: str,
+        limit: int,
+        remove_stopwords: bool,
+    ) -> CorpusState:
+        source = source.lower().strip()
+        if source not in {"demo", "trec-covid"}:
+            raise ValueError("source must be one of: demo, trec-covid")
+        if limit < 10:
+            raise ValueError("limit must be >= 10")
+
+        with self._lock:
+            if (
+                self._state is not None
+                and self._state.source == source
+                and self._state.limit == limit
+                and self._state.remove_stopwords == remove_stopwords
+            ):
+                return self._state
+
+            if source == "trec-covid":
+                docs, topics, qrels = load_trec_covid(limit=limit)
+            else:
+                docs = get_demo_corpus()
+                topics = pd.DataFrame()
+                qrels = pd.DataFrame()
+
+            if not docs:
+                raise RuntimeError("No documents were loaded for the requested corpus.")
+
+            retriever = GraphIRRetriever(
+                documents=docs,
+                nlp=self._nlp,
+                embedding_model=self._embedder,
+                remove_stopwords=remove_stopwords,
+            )
+
+            self._state = CorpusState(
+                source=source,
+                limit=limit,
+                remove_stopwords=remove_stopwords,
+                retriever=retriever,
+                topics=topics,
+                qrels=qrels,
+                nlp_mode=self._nlp_mode,
+                embedding_mode=self._embedding_mode,
+                loaded_at=datetime.now(timezone.utc).isoformat(),
+            )
+            return self._state
+
+    def status(self) -> dict:
+        if self._state is None:
+            return {
+                "loaded": False,
+                "nlp_mode": self._nlp_mode,
+                "embedding_mode": self._embedding_mode,
+            }
+
+        return {
+            "loaded": True,
+            "source": self._state.source,
+            "limit": self._state.limit,
+            "remove_stopwords": self._state.remove_stopwords,
+            "documents": len(self._state.retriever.prepared_documents),
+            "topics": 0 if self._state.topics.empty else len(self._state.topics),
+            "qrels": 0 if self._state.qrels.empty else len(self._state.qrels),
+            "loaded_at": self._state.loaded_at,
+            "nlp_mode": self._state.nlp_mode,
+            "embedding_mode": self._state.embedding_mode,
+        }
+
+    def list_topics(self, max_items: int = 200) -> list[dict]:
+        if self._state is None or self._state.topics.empty:
+            return []
+
+        topics = self._state.topics.copy()
+        if "qid" not in topics.columns:
+            return []
+        topics["qid"] = topics["qid"].astype(str)
+        columns = [c for c in ["qid", "title", "description", "narrative"] if c in topics.columns]
+        return topics[columns].head(max_items).to_dict(orient="records")
+
+    def _resolve_query_text(self, state: CorpusState, query: str, qid: str | None, topic_field: str) -> str:
+        if query and query.strip():
+            return query.strip()
+
+        if qid and not state.topics.empty and topic_field in state.topics.columns:
+            topic_rows = state.topics[state.topics["qid"].astype(str) == str(qid)]
+            if not topic_rows.empty:
+                value = str(topic_rows.iloc[0].get(topic_field, "") or "").strip()
+                if value:
+                    return value
+
+        raise ValueError("Provide a non-empty query or valid qid+topic_field.")
+
+    def search(
+        self,
+        source: str,
+        limit: int,
+        remove_stopwords: bool,
+        query: str,
+        top_k: int,
+        node_weight: float,
+        edge_weight: float,
+        qid: str | None = None,
+        topic_field: str = "description",
+    ) -> dict:
+        state = self.ensure_loaded(source=source, limit=limit, remove_stopwords=remove_stopwords)
+        resolved_query = self._resolve_query_text(state, query, qid, topic_field)
+
+        results = state.retriever.retrieve_top_k(
+            query=resolved_query,
+            k=top_k,
+            node_weight=node_weight,
+            edge_weight=edge_weight,
+        )
+        query_features = state.retriever.extract_graph_features(resolved_query)
+
+        return {
+            "query": resolved_query,
+            "source": state.source,
+            "top_k": top_k,
+            "results": results,
+            "query_nodes": len(query_features.nodes),
+            "query_relations": len(query_features.relations),
+            "status": self.status(),
+        }
+
+    def evaluate(
+        self,
+        source: str,
+        limit: int,
+        remove_stopwords: bool,
+        qid: str,
+        topic_field: str,
+        top_k: int,
+        node_weight: float,
+        edge_weight: float,
+    ) -> dict:
+        if not qid:
+            raise ValueError("qid is required for evaluation.")
+
+        state = self.ensure_loaded(source=source, limit=limit, remove_stopwords=remove_stopwords)
+        if state.topics.empty or state.qrels.empty:
+            raise ValueError("Evaluation is only available for trec-covid source.")
+
+        query_text = self._resolve_query_text(state, query="", qid=qid, topic_field=topic_field)
+        search_payload = self.search(
+            source=source,
+            limit=limit,
+            remove_stopwords=remove_stopwords,
+            query=query_text,
+            top_k=top_k,
+            node_weight=node_weight,
+            edge_weight=edge_weight,
+            qid=qid,
+            topic_field=topic_field,
+        )
+
+        qrels = state.qrels.copy()
+        relevant_docnos = set(
+            qrels[(qrels["qid"].astype(str) == str(qid)) & (qrels["label"] > 0)]["docno"].astype(str).tolist()
+        )
+        retrieved_docnos = [str(item["docno"]) for item in search_payload["results"]]
+        precision, recall = precision_recall_at_k(retrieved_docnos, relevant_docnos, top_k)
+        f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
+
+        return {
+            "qid": str(qid),
+            "query": query_text,
+            "top_k": top_k,
+            "precision_at_k": precision,
+            "recall_at_k": recall,
+            "f1_at_k": f1,
+            "relevant_docs_in_loaded_subset": len(relevant_docnos),
+            "retrieved_docnos": retrieved_docnos,
+            "status": self.status(),
+        }
+
+
+def map_docs_for_preview(docs: list[RawDocument], max_items: int = 20) -> list[dict]:
+    payload = []
+    for doc in docs[:max_items]:
+        payload.append(
+            {
+                "docno": doc.docno,
+                "title": doc.title,
+                "abstract_preview": (doc.abstract[:240] + "...") if len(doc.abstract) > 240 else doc.abstract,
+            }
+        )
+    return payload

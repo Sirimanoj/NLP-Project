@@ -89,18 +89,32 @@ Notes:
 
 ## Graph IR Assignment Web App
 
-A separate Streamlit app was added for your NLP course project based on:
+A separate Graph IR implementation was added for your NLP course project based on:
 **Information Retrieval Using Dependency Graphs (Graph IR) with TREC-COVID**.
 
-Run:
+### Local Streamlit Prototype
 
 ```bash
 streamlit run graph_ir_app/app.py
 ```
 
-See details and setup steps in:
-`graph_ir_app/README.md`
+See: `graph_ir_app/README.md`
+
+### Production Deployment (Recommended)
+
+- **Frontend on Vercel**: `graph_ir_frontend/`
+- **Backend on Render**: `graph_ir_backend/`
+
+Docs:
+- `graph_ir_frontend/README.md`
+- `graph_ir_backend/README.md`
+
+Quick deploy flow:
+1. Deploy backend first on Render using `render.yaml`.
+2. Copy Render backend URL (for example `https://graph-ir-api.onrender.com`).
+3. Deploy frontend on Vercel with root directory `graph_ir_frontend`.
+4. Open Vercel app and paste Render URL into `Render API Base URL`.
 
 Deployment configs included:
-- `render.yaml` (Render Blueprint)
-- `graph_ir_app/requirements.txt` (lightweight hosting deps)
+- `render.yaml` (Render Blueprint for Graph IR backend API)
+- `graph_ir_frontend/vercel.json` (Vercel static routing)
