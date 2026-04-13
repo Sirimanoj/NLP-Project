@@ -9,6 +9,7 @@ FastAPI backend for your Graph IR project.
 - Topic-driven search (`qid` + `topic_field`)
 - Evaluation (`Precision@K`, `Recall@K`, `F1@K`)
 - CORS ready for Vercel frontend
+- Deployment-safe NLP fallback parser when spaCy is unavailable
 
 ## Local Run
 
@@ -23,6 +24,10 @@ Optional (stronger semantic model):
 pip install -r graph_ir_backend/requirements-advanced.txt
 set GRAPH_IR_EMBEDDING_MODE=sentence
 ```
+
+Optional (full spaCy dependency parsing quality) is included in
+`requirements-advanced.txt`. Default `requirements.txt` is kept lightweight for
+reliable cloud builds.
 
 ## API Endpoints
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import threading
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -38,6 +39,67 @@ class LightweightEmbeddingModel:
         return np.vstack(vectors) if vectors else np.empty((0, self.dim), dtype=np.float32)
 
 
+class _LiteToken:
+    def __init__(self, text: str, is_stop: bool = False) -> None:
+        self.text = text
+        self.lemma_ = text.lower()
+        self.is_space = text.isspace()
+        self.is_punct = bool(text) and all(not ch.isalnum() for ch in text)
+        self.is_stop = is_stop
+        self.dep_ = "dep"
+        self.head = self
+
+
+class LightweightDependencyNLP:
+    """Tiny parser fallback used when spaCy is unavailable in deployment."""
+
+    _stopwords = {
+        "a",
+        "an",
+        "the",
+        "and",
+        "or",
+        "to",
+        "of",
+        "in",
+        "on",
+        "for",
+        "with",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "by",
+        "as",
+        "at",
+        "it",
+        "this",
+        "that",
+        "from",
+    }
+
+    def __call__(self, text: str) -> list[_LiteToken]:
+        parts = re.findall(r"[A-Za-z0-9']+|[^\w\s]", text or "")
+        tokens = [_LiteToken(p, is_stop=(p.lower() in self._stopwords)) for p in parts]
+        prev_content: _LiteToken | None = None
+        for tok in tokens:
+            if tok.is_space:
+                continue
+            if tok.is_punct:
+                tok.dep_ = "punct"
+                tok.head = prev_content or tok
+                continue
+            if prev_content is None:
+                tok.dep_ = "root"
+                tok.head = tok
+            else:
+                tok.dep_ = "dep"
+                tok.head = prev_content
+            prev_content = tok
+        return tokens
+
+
 @dataclass
 class CorpusState:
     source: str
@@ -59,21 +121,21 @@ class GraphIRService:
         self._embedder, self._embedding_mode = self._load_embedding_model()
 
     def _load_nlp_model(self):
-        import spacy
+        try:
+            import spacy
+        except Exception:
+            return LightweightDependencyNLP(), "lightweight_dependency_parser"
 
         try:
             return spacy.load("en_core_web_sm"), "spacy_en_core_web_sm"
         except OSError:
             try:
-                from spacy.cli import download
-
-                download("en_core_web_sm")
-                return spacy.load("en_core_web_sm"), "spacy_en_core_web_sm_downloaded"
-            except Exception:
                 nlp = spacy.blank("en")
                 if "sentencizer" not in nlp.pipe_names:
                     nlp.add_pipe("sentencizer")
                 return nlp, "spacy_blank_en"
+            except Exception:
+                return LightweightDependencyNLP(), "lightweight_dependency_parser"
 
     def _load_embedding_model(self):
         mode = os.getenv("GRAPH_IR_EMBEDDING_MODE", "lite").lower()
