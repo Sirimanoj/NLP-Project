@@ -24,6 +24,7 @@ class LightweightEmbeddingModel:
 
     def __init__(self, dim: int = 384) -> None:
         self.dim = dim
+        self.is_lightweight_hash = True
 
     def encode(self, texts, normalize_embeddings: bool = True, show_progress_bar: bool = False):
         vectors = []
@@ -310,9 +311,11 @@ class GraphIRService:
         )
 
         qrels = state.qrels.copy()
-        relevant_docnos = set(
+        relevant_docnos_total = set(
             qrels[(qrels["qid"].astype(str) == str(qid)) & (qrels["label"] > 0)]["docno"].astype(str).tolist()
         )
+        loaded_docnos = {str(doc.docno) for doc in state.retriever.prepared_documents}
+        relevant_docnos = relevant_docnos_total & loaded_docnos
         retrieved_docnos = [str(item["docno"]) for item in search_payload["results"]]
         precision, recall = precision_recall_at_k(retrieved_docnos, relevant_docnos, top_k)
         f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
@@ -325,6 +328,7 @@ class GraphIRService:
             "recall_at_k": recall,
             "f1_at_k": f1,
             "relevant_docs_in_loaded_subset": len(relevant_docnos),
+            "relevant_docs_total_qrels": len(relevant_docnos_total),
             "retrieved_docnos": retrieved_docnos,
             "status": self.status(),
         }

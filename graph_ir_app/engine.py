@@ -101,9 +101,26 @@ class GraphIRRetriever:
 
         return np.vstack([self._embedding_cache[node] for node in ordered_nodes])
 
+    @staticmethod
+    def lexical_node_similarity(nodes1: frozenset[str], nodes2: frozenset[str]) -> float:
+        if not nodes1 or not nodes2:
+            return 0.0
+        inter = len(nodes1 & nodes2)
+        if inter == 0:
+            return 0.0
+        union = len(nodes1 | nodes2)
+        jaccard = inter / union if union else 0.0
+        containment = inter / min(len(nodes1), len(nodes2))
+        return float((0.4 * jaccard) + (0.6 * containment))
+
     def semantic_node_similarity(self, nodes1: frozenset[str], nodes2: frozenset[str]) -> float:
         if not nodes1 or not nodes2:
             return 0.0
+
+        # In deployment-lite mode, deterministic hash embeddings are not semantically meaningful.
+        # Fall back to lexical overlap so ranking quality remains interpretable.
+        if getattr(self.embedding_model, "is_lightweight_hash", False):
+            return self.lexical_node_similarity(nodes1, nodes2)
 
         emb1 = self._encode_node_set(nodes1)
         emb2 = self._encode_node_set(nodes2)
@@ -112,7 +129,9 @@ class GraphIRRetriever:
 
         sim_matrix = cosine_similarity(emb1, emb2)
         max_sims = sim_matrix.max(axis=1)
-        return float(max_sims.mean())
+        embed_score = float(max_sims.mean())
+        lexical_score = self.lexical_node_similarity(nodes1, nodes2)
+        return float((0.8 * embed_score) + (0.2 * lexical_score))
 
     @staticmethod
     def edge_similarity_improved(rels1: frozenset[str], rels2: frozenset[str]) -> float:

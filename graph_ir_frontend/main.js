@@ -198,7 +198,10 @@ async function runEvaluation() {
       { label: `Precision@${data.top_k}`, value: Number(data.precision_at_k).toFixed(4) },
       { label: `Recall@${data.top_k}`, value: Number(data.recall_at_k).toFixed(4) },
       { label: `F1@${data.top_k}`, value: Number(data.f1_at_k).toFixed(4) },
-      { label: "Relevant Docs", value: data.relevant_docs_in_loaded_subset ?? 0 },
+      {
+        label: "Relevant Docs (Loaded/Total)",
+        value: `${data.relevant_docs_in_loaded_subset ?? 0}/${data.relevant_docs_total_qrels ?? 0}`,
+      },
     ]);
     showStatus(JSON.stringify(data.status, null, 2));
   } catch (err) {
