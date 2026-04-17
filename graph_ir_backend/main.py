@@ -59,6 +59,7 @@ class EvaluateRequest(BaseModel):
     limit: int = Field(default=1000, ge=10, le=5000)
     remove_stopwords: bool = True
     qid: str
+    auto_pick_qid: bool = True
     topic_field: str = "description"
     top_k: int = Field(default=5, ge=1, le=50)
     node_weight: float = Field(default=0.7, ge=0.0, le=1.0)
@@ -129,6 +130,7 @@ def evaluate(payload: EvaluateRequest) -> dict:
             limit=payload.limit,
             remove_stopwords=payload.remove_stopwords,
             qid=payload.qid,
+            auto_pick_qid=payload.auto_pick_qid,
             topic_field=payload.topic_field,
             top_k=payload.top_k,
             node_weight=payload.node_weight,

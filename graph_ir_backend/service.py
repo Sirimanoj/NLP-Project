@@ -310,6 +310,7 @@ class GraphIRService:
         limit: int,
         remove_stopwords: bool,
         qid: str,
+        auto_pick_qid: bool,
         topic_field: str,
         top_k: int,
         node_weight: float,
@@ -322,7 +323,9 @@ class GraphIRService:
         if state.topics.empty or state.qrels.empty:
             raise ValueError("Evaluation is only available for trec-covid source.")
 
-        query_text = self._resolve_query_text(state, query="", qid=qid, topic_field=topic_field)
+        requested_qid = str(qid)
+        effective_qid = requested_qid
+        query_text = self._resolve_query_text(state, query="", qid=effective_qid, topic_field=topic_field)
         search_payload = self.search(
             source=source,
             limit=limit,
@@ -331,16 +334,48 @@ class GraphIRService:
             top_k=top_k,
             node_weight=node_weight,
             edge_weight=edge_weight,
-            qid=qid,
+            qid=effective_qid,
             topic_field=topic_field,
         )
 
         qrels = state.qrels.copy()
-        relevant_docnos_total = set(
-            qrels[(qrels["qid"].astype(str) == str(qid)) & (qrels["label"] > 0)]["docno"].astype(str).tolist()
-        )
+        qrels["qid"] = qrels["qid"].astype(str)
+        qrels["docno"] = qrels["docno"].astype(str)
+        qrels = qrels[qrels["label"] > 0].copy()
+
         loaded_docnos = {str(doc.docno) for doc in state.retriever.prepared_documents}
+        relevant_docnos_total = set(qrels[qrels["qid"] == effective_qid]["docno"].tolist())
         relevant_docnos = relevant_docnos_total & loaded_docnos
+
+        auto_selected_qid = None
+        auto_selection_reason = None
+        if not relevant_docnos and auto_pick_qid:
+            loaded_qrels = qrels[qrels["docno"].isin(loaded_docnos)]
+            if not loaded_qrels.empty:
+                counts = loaded_qrels.groupby("qid")["docno"].nunique().sort_values(ascending=False)
+                best_qid = str(counts.index[0])
+                if best_qid and best_qid != effective_qid:
+                    auto_selected_qid = best_qid
+                    auto_selection_reason = (
+                        f"Requested qid {effective_qid} had 0 judged relevant docs in loaded subset; "
+                        f"auto-switched to qid {best_qid}."
+                    )
+                    effective_qid = best_qid
+                    query_text = self._resolve_query_text(state, query="", qid=effective_qid, topic_field=topic_field)
+                    search_payload = self.search(
+                        source=source,
+                        limit=limit,
+                        remove_stopwords=remove_stopwords,
+                        query=query_text,
+                        top_k=top_k,
+                        node_weight=node_weight,
+                        edge_weight=edge_weight,
+                        qid=effective_qid,
+                        topic_field=topic_field,
+                    )
+                    relevant_docnos_total = set(qrels[qrels["qid"] == effective_qid]["docno"].tolist())
+                    relevant_docnos = relevant_docnos_total & loaded_docnos
+
         retrieved_docnos = [str(item["docno"]) for item in search_payload["results"]]
         if not relevant_docnos and relevant_docnos_total:
             raise ValueError(
@@ -351,7 +386,10 @@ class GraphIRService:
         f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
 
         return {
-            "qid": str(qid),
+            "qid": effective_qid,
+            "requested_qid": requested_qid,
+            "auto_selected_qid": auto_selected_qid,
+            "auto_selection_reason": auto_selection_reason,
             "query": query_text,
             "top_k": top_k,
             "precision_at_k": precision,

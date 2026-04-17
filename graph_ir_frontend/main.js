@@ -203,6 +203,7 @@ async function runEvaluation() {
       limit: toNum(els.limit.value, 1000),
       remove_stopwords: els.removeStopwords.checked,
       qid,
+      auto_pick_qid: true,
       topic_field: els.topicField.value,
       top_k: toNum(els.topK.value, 5),
       node_weight: toNum(els.nodeWeight.value, 0.7),
@@ -214,6 +215,7 @@ async function runEvaluation() {
     });
 
     renderMetrics([
+      { label: "QID Used", value: data.qid || "-" },
       { label: `Precision@${data.top_k}`, value: Number(data.precision_at_k).toFixed(4) },
       { label: `Recall@${data.top_k}`, value: Number(data.recall_at_k).toFixed(4) },
       { label: `F1@${data.top_k}`, value: Number(data.f1_at_k).toFixed(4) },
@@ -222,8 +224,14 @@ async function runEvaluation() {
         value: `${data.relevant_docs_in_loaded_subset ?? 0}/${data.relevant_docs_total_qrels ?? 0}`,
       },
     ]);
-    showStatus(JSON.stringify(data.status, null, 2));
+    const statusParts = [];
+    if (data.auto_selection_reason) {
+      statusParts.push(`Auto-QID: ${data.auto_selection_reason}`);
+    }
+    statusParts.push(JSON.stringify(data.status, null, 2));
+    showStatus(statusParts.join("\n\n"));
   } catch (err) {
+    renderMetrics([]);
     showStatus(err.message, true);
   }
 }
