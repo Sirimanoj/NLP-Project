@@ -231,7 +231,32 @@ class GraphIRService:
             return []
         topics["qid"] = topics["qid"].astype(str)
         columns = [c for c in ["qid", "title", "description", "narrative"] if c in topics.columns]
-        return topics[columns].head(max_items).to_dict(orient="records")
+        rows = topics[columns].head(max_items).to_dict(orient="records")
+
+        if self._state.qrels.empty:
+            return rows
+
+        qrels = self._state.qrels.copy()
+        if "qid" not in qrels.columns or "docno" not in qrels.columns or "label" not in qrels.columns:
+            return rows
+
+        qrels = qrels[qrels["label"] > 0].copy()
+        if qrels.empty:
+            return rows
+
+        qrels["qid"] = qrels["qid"].astype(str)
+        qrels["docno"] = qrels["docno"].astype(str)
+        total_by_qid = qrels.groupby("qid")["docno"].nunique().to_dict()
+
+        loaded_docnos = {str(doc.docno) for doc in self._state.retriever.prepared_documents}
+        loaded_qrels = qrels[qrels["docno"].isin(loaded_docnos)]
+        loaded_by_qid = loaded_qrels.groupby("qid")["docno"].nunique().to_dict()
+
+        for row in rows:
+            qid = str(row.get("qid", ""))
+            row["relevant_total_qrels"] = int(total_by_qid.get(qid, 0))
+            row["relevant_in_loaded_subset"] = int(loaded_by_qid.get(qid, 0))
+        return rows
 
     def _resolve_query_text(self, state: CorpusState, query: str, qid: str | None, topic_field: str) -> str:
         if query and query.strip():
@@ -317,6 +342,11 @@ class GraphIRService:
         loaded_docnos = {str(doc.docno) for doc in state.retriever.prepared_documents}
         relevant_docnos = relevant_docnos_total & loaded_docnos
         retrieved_docnos = [str(item["docno"]) for item in search_payload["results"]]
+        if not relevant_docnos and relevant_docnos_total:
+            raise ValueError(
+                "No judged relevant documents for this qid are present in the loaded subset. "
+                "Increase corpus limit or choose a qid with relevant_in_loaded_subset > 0."
+            )
         precision, recall = precision_recall_at_k(retrieved_docnos, relevant_docnos, top_k)
         f1 = (2 * precision * recall / (precision + recall)) if (precision + recall) > 0 else 0.0
 

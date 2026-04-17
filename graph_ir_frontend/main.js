@@ -96,14 +96,25 @@ async function refreshTopics() {
   try {
     const data = await apiFetch("/api/v1/topics?limit=300");
     const topics = data?.topics || [];
-    els.topicQid.innerHTML = topics.length
-      ? topics
-          .map((t) => {
-            const title = (t.title || t.description || "").slice(0, 80);
-            return `<option value="${t.qid}">${t.qid} ${title ? " - " + title : ""}</option>`;
-          })
-          .join("")
-      : `<option value="">(no topics loaded)</option>`;
+    if (!topics.length) {
+      els.topicQid.innerHTML = `<option value="">(no topics loaded)</option>`;
+      return;
+    }
+
+    els.topicQid.innerHTML = topics
+      .map((t) => {
+        const title = (t.title || t.description || "").slice(0, 70);
+        const loadedRel = Number(t.relevant_in_loaded_subset ?? 0);
+        const totalRel = Number(t.relevant_total_qrels ?? 0);
+        const relTag = totalRel > 0 ? ` [rel:${loadedRel}/${totalRel}]` : "";
+        return `<option value="${t.qid}">${t.qid}${relTag}${title ? " - " + title : ""}</option>`;
+      })
+      .join("");
+
+    const firstUsable = topics.find((t) => Number(t.relevant_in_loaded_subset ?? 0) > 0);
+    if (firstUsable?.qid) {
+      els.topicQid.value = String(firstUsable.qid);
+    }
   } catch {
     els.topicQid.innerHTML = `<option value="">(topics unavailable)</option>`;
   }
@@ -124,6 +135,7 @@ async function loadCorpus() {
     showStatus(JSON.stringify(data.status, null, 2));
     await refreshTopics();
   } catch (err) {
+    renderMetrics([]);
     showStatus(err.message, true);
   }
 }
@@ -173,6 +185,13 @@ async function runSearch() {
 
 async function runEvaluation() {
   try {
+    if (els.source.value !== "trec-covid") {
+      throw new Error("Evaluation is available only for trec-covid source.");
+    }
+    if (els.queryMode.value !== "topic") {
+      throw new Error("Switch Query Mode to 'topic' for evaluation.");
+    }
+
     const qid = els.topicQid.value;
     if (!qid) {
       throw new Error("Select a qid to evaluate.");
